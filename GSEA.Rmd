@@ -1,0 +1,403 @@
+---
+title: "GSEA"
+author: "LA"
+date: "2024-01-08"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+#BiocManager::install(organism, character.only = TRUE, force = TRUE)
+library(clusterProfiler)
+library(DOSE)
+library(ggplot2)
+library(enrichplot)
+library(ReactomePA)
+library(dplyr)
+organism = "org.Hs.eg.db"
+library(organism, character.only = TRUE)
+set.seed(1234)
+library(stringr)
+library(tidyr)
+
+```
+
+```{r}
+# Prepare Input
+df = read.csv("/Users/f006f9w/Dropbox (Dartmouth College)/Mac/Desktop/HMO_data/TypeIvsTypeII_final/Secretory_Lactocytes/Type_II.csv")
+df$rank <- -log10(df$pvalue)*sign(df$log2FoldChange)
+df <- na.omit(df)
+geneList1 <- df[,8]
+names(geneList1)<- as.character(df[,1])
+geneList1 = sort(geneList1, decreasing = TRUE)
+
+```
+
+```{r}
+library(msigdbr)
+library(fgsea)
+
+m_df <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP")%>% 
+  dplyr::select(gs_name, entrez_gene)
+head(m_df)
+
+gsea <- GSEA(geneList1, minGSSize = 2, TERM2GENE = m_df,  pAdjustMethod = "BH")
+head(gsea)
+gsea <- setReadable(gsea, 'org.Hs.eg.db', keyType = "auto") 
+gsea <- as.data.frame(gsea)
+
+### can't interpret the output ###
+```
+
+```{r}
+GO1 <- gseGO(geneList     = geneList1,
+              OrgDb        = org.Hs.eg.db,
+              keyType = "SYMBOL",
+              ont          = "BP",
+              minGSSize    = 10,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              pAdjustMethod = "BH",
+              verbose      = FALSE)
+
+head(GO1)
+
+GO1 <- setReadable(GO1, 'org.Hs.eg.db') 
+GO_df1 <- as.data.frame(GO1)
+
+saveRDS(GO1, "GO_LC2_TypeII.rds")
+
+write.csv(GO_df1, "GOBP_LC2_TypeII.csv", row.names = FALSE)
+
+
+```
+
+```{r}
+TypeII = read.csv("/Users/f006f9w/Dropbox (Dartmouth College)/Mac/Desktop/HMO_data/TypeIvsTypeII_final/Secretory_Lactocytes/GOBP_LC2_TypeII.csv")
+TypeI = read.csv("/Users/f006f9w/Dropbox (Dartmouth College)/Mac/Desktop/HMO_data/TypeIvsTypeII_final/Secretory_Lactocytes/GOBP_LC2_TypeI.csv")
+
+simMatrixI <- calculateSimMatrix(TypeI$ID, orgdb="org.Hs.eg.db", ont="BP", method="Rel")
+scoresI <- setNames(-log10(TypeI$qvalue), TypeI$ID)
+reducedTermsI <- reduceSimMatrix(simMatrixI, scoresI, threshold=0.7, orgdb="org.Hs.eg.db")
+
+simMatrixII <- calculateSimMatrix(TypeII$ID, orgdb="org.Hs.eg.db", ont="BP", method="Rel")
+scoresII <- setNames(-log10(TypeII$qvalue), TypeII$ID)
+reducedTermsII <- reduceSimMatrix(simMatrixII, scoresII, threshold=0.7, orgdb="org.Hs.eg.db")
+
+filtered_TypeI <- TypeI %>%
+  semi_join(reducedTermsI, by = c("Description" = "parentTerm"))
+
+filtered_TypeII <- TypeII %>%
+  semi_join(reducedTermsII, by = c("Description" = "parentTerm"))
+
+
+```
+
+```{r}
+filtered_TypeI$Type <- "Type-I"
+filtered_TypeII$Type <- "Type-II"
+merged_df <- rbind(filtered_TypeI, filtered_TypeII)
+
+merged_df <- merged_df %>%
+  arrange(NES)
+
+p1 <- ggplot(merged_df, aes(x = Type, y = Description, size = -log(p.adjust), color = NES)) +
+  geom_point() +
+  scale_size_continuous(range = c(2, 4)) +
+  scale_color_continuous() +
+  scale_color_continuous("Enrichment Score", 
+                         type="viridis") +
+  theme_bw() +
+  labs(x = "Type", y = "Description", size = "-log10(P-value)", color = "Enrichment Score")+
+  theme(axis.text.y = element_text(color = "black", face = "italic", size = 8), 
+        axis.title = element_text(size = 0))
+
+p1
+
+
+
+```
+
+
+```{r}
+
+TypeI_LC1 <- read.csv("/Users/f006f9w/Dropbox (Dartmouth College)/Mac/Desktop/HMO_data/Type1vsType2/LC1/GOBP_LC1_TypeI.csv")
+TypeII_LC1 <- read.csv("/Users/f006f9w/Dropbox (Dartmouth College)/Mac/Desktop/HMO_data/Type1vsType2/LC1/GOBP_LC1_TypeII.csv")
+
+positive_TypeI_LC2 <- TypeI_LC1[TypeI_LC1$NES > 0, ]
+negative_TypeI_LC2 <- TypeI_LC1[TypeI_LC1$NES < 0, ]
+
+positive_TypeII_LC2 <- TypeII_LC1[TypeII_LC1$NES > 0, ]
+negative_TypeII_LC2 <- TypeII_LC1[TypeII_LC1$NES < 0, ]
+
+split_valuesI <- unlist(strsplit(positive_TypeI_LC2$core_enrichment, "/"))
+# Count occurrences of each value
+value_countsI <- table(split_valuesI)
+value_countsI <- sort(value_countsI, decreasing = TRUE)
+
+split_valuesII <- unlist(strsplit(positive_TypeII_LC2$core_enrichment, "/"))
+# Count occurrences of each value
+value_countsII <- table(split_valuesII)
+value_countsII <- sort(value_countsII, decreasing = TRUE)
+
+### Overlap Genes #### 
+# overlapI <- value_countsI[overlap]
+# overlapII <- value_countsII[overlap]
+
+top_20_genesI <- value_countsI[1:20]
+top_20_genes_dfI <- data.frame(top_20_genesI)
+
+top_20_genesII <- value_countsII[1:20]
+top_20_genes_dfII <- data.frame(top_20_genesII)
+
+p2<- ggplot(top_20_genes_dfI, aes(x = split_valuesI, y = Freq)) +
+  geom_bar(stat = "identity", fill = "coral2", color = "black", width = 0.3) + 
+  labs(y = "Frequency") +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5, size = 10),
+        axis.text.y = element_text(vjust = 0.5, hjust=1.5, size = 10),
+        axis.title.x = element_text(size = 0))
+
+ggsave("Pos_gene_Freq_TypeI_LC1.pdf", plot = p2, device = "pdf", width = 6, height = 4)
+
+
+### Unique Genes #### 
+
+uniqueI <- value_countsI[!names(value_countsI) %in% overlap]
+top_20_uniqueI <- uniqueI[1:20]
+top_20_unique_dfI <- data.frame(top_20_uniqueI)
+
+uniqueII <- value_countsII[!names(value_countsII) %in% overlap]
+top_20_uniqueII <- uniqueII[1:20]
+top_20_unique_dfII <- data.frame(top_20_uniqueII)
+
+
+```
+
+
+```{r}
+mat_uniqueI <- matrix(0, nrow = nrow(negative_TypeI_LC2), ncol = length(rownames(top_20_uniqueI)))
+colnames(mat_uniqueI) <- rownames(top_20_uniqueI)
+
+# Loop through each row of GO_df1 to populate pathway_matrix
+for (i in 1:nrow(negative_TypeI_LC2)) {
+  genes <- unlist(strsplit(as.character(negative_TypeI_LC2$core_enrichment[i]), "/"))
+  common_genes <- intersect(genes, colnames(mat_uniqueI))
+  # Set the corresponding pathways to 1 in pathway_matrix
+  mat_uniqueI[i, match(common_genes, colnames(mat_uniqueI))] <- 1
+}
+rownames(mat_uniqueI) <- negative_TypeI_LC2$Description
+
+# Remove rows whose sum is 0
+mat_uniqueI <- mat_uniqueI[rowSums(mat_uniqueI) != 0, ]
+
+# Convert the pathway_matrix to a matrix with numerical values
+mat_unique_numericI <- mat_uniqueI
+mat_unique_numericI[mat_unique_numericI == "Absent"] <- 0
+mat_unique_numericI[mat_unique_numericI == "Present"] <- 1
+mat_unique_numericI <- as.matrix(mat_unique_numericI)
+
+mat_uniqueII <- matrix(0, nrow = nrow(negative_TypeII_LC2), ncol = length(rownames(top_20_uniqueII)))
+colnames(mat_uniqueII) <- rownames(top_20_uniqueII)
+
+# Loop through each row of GO_df1 to populate pathway_matrix
+for (i in 1:nrow(negative_TypeII_LC2)) {
+  genes <- unlist(strsplit(as.character(negative_TypeII_LC2$core_enrichment[i]), "/"))
+  common_genes <- intersect(genes, colnames(mat_uniqueII))
+  # Set the corresponding pathways to 1 in pathway_matrix
+  mat_uniqueII[i, match(common_genes, colnames(mat_uniqueII))] <- 1
+}
+rownames(mat_uniqueII) <- negative_TypeII_LC2$Description
+
+# Remove rows whose sum is 0
+mat_uniqueII <- mat_uniqueII[rowSums(mat_uniqueII) != 0, ]
+
+# Convert the pathway_matrix to a matrix with numerical values
+mat_unique_numericII <- mat_uniqueII
+mat_unique_numericII[mat_unique_numericII == "Absent"] <- 0
+mat_unique_numericII[mat_unique_numericII == "Present"] <- 1
+mat_unique_numericII <- as.matrix(mat_unique_numericII)
+
+
+```
+
+
+```{r}
+pathway_matrixI <- matrix(0, nrow = nrow(negative_TypeI_LC2), ncol = length(rownames(top_20_genes)))
+colnames(pathway_matrixI) <- rownames(top_20_genesI)
+
+# Loop through each row of GO_df1 to populate pathway_matrix
+for (i in 1:nrow(negative_TypeI_LC2)) {
+  genes <- unlist(strsplit(as.character(negative_TypeI_LC2$core_enrichment[i]), "/"))
+  common_genes <- intersect(genes, colnames(pathway_matrixI))
+  # Set the corresponding pathways to 1 in pathway_matrix
+  pathway_matrixI[i, match(common_genes, colnames(pathway_matrixI))] <- 1
+}
+rownames(pathway_matrixI) <- negative_TypeI_LC2$Description
+
+# Remove rows whose sum is 0
+pathway_matrixI <- pathway_matrixI[rowSums(pathway_matrixI) != 0, ]
+
+# Convert the pathway_matrix to a matrix with numerical values
+pathway_matrix_numericI <- pathway_matrixI
+pathway_matrix_numericI[pathway_matrix_numericI == "Absent"] <- 0
+pathway_matrix_numericI[pathway_matrix_numericI == "Present"] <- 1
+pathway_matrix_numericI <- as.matrix(pathway_matrix_numericI)
+
+
+pathway_matrixII <- matrix(0, nrow = nrow(negative_TypeII_LC2), ncol = length(rownames(top_20_genes)))
+colnames(pathway_matrixII) <- rownames(top_20_genesII)
+
+# Loop through each row of GO_df1 to populate pathway_matrix
+for (i in 1:nrow(negative_TypeII_LC2)) {
+  genes <- unlist(strsplit(as.character(negative_TypeII_LC2$core_enrichment[i]), "/"))
+  common_genes <- intersect(genes, colnames(pathway_matrixII))
+  # Set the corresponding pathways to 1 in pathway_matrix
+  pathway_matrixII[i, match(common_genes, colnames(pathway_matrixII))] <- 1
+}
+rownames(pathway_matrixII) <- negative_TypeII_LC2$Description
+
+# Remove rows whose sum is 0
+pathway_matrixII <- pathway_matrixII[rowSums(pathway_matrixII) != 0, ]
+
+# Convert the pathway_matrix to a matrix with numerical values
+pathway_matrix_numericII <- pathway_matrixII
+pathway_matrix_numericII[pathway_matrix_numericII == "Absent"] <- 0
+pathway_matrix_numericII[pathway_matrix_numericII == "Present"] <- 1
+pathway_matrix_numericII <- as.matrix(pathway_matrix_numericII)
+
+# Get common row names
+common_pathways <- intersect(rownames(pathway_matrix_numericI), rownames(pathway_matrix_numericII))
+# Subset matrices based on common row names
+subset_matrixI <- pathway_matrix_numericI[common_pathways, ]
+subset_matrixII <- pathway_matrix_numericII[common_pathways, ]
+
+```
+
+```{r}
+pathway_matrix <- matrix(0, nrow = nrow(negative_NES_df1), ncol = length(rownames(top_20_genes)))
+colnames(pathway_matrix) <- rownames(top_20_genes)
+
+# Loop through each row of GO_df1 to populate pathway_matrix
+for (i in 1:nrow(negative_NES_df1)) {
+  genes <- unlist(strsplit(as.character(negative_NES_df1$core_enrichment[i]), "/"))
+  common_genes <- intersect(genes, colnames(pathway_matrix))
+  # Set the corresponding pathways to 1 in pathway_matrix
+  pathway_matrix[i, match(common_genes, colnames(pathway_matrix))] <- 1
+}
+rownames(pathway_matrix) <- negative_NES_df1$Description
+
+# Remove rows whose sum is 0
+pathway_matrix <- pathway_matrix[rowSums(pathway_matrix) != 0, ]
+
+# Convert the pathway_matrix to a matrix with numerical values
+pathway_matrix_numeric <- pathway_matrix
+pathway_matrix_numeric[pathway_matrix_numeric == "Absent"] <- 0
+pathway_matrix_numeric[pathway_matrix_numeric == "Present"] <- 1
+pathway_matrix_numeric <- as.matrix(pathway_matrix_numeric)
+
+
+p4 <- pheatmap(
+  mat_unique_numericI,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = c("white", "blue2"),  # Use specified colors for heatmap
+  #annotation_row = annotation_df,  # Add pathway annotations
+  #annotation_legend = TRUE,  # Show annotation legend
+  #annotation_colors = list(Regulation = regulation_colors),  # Apply custom annotation colors
+  fontsize_row = 9,
+  fontsize_col = 13,
+  legend = FALSE,
+  #legend_breaks = c(0, 1),          
+  legend_labels = c("Absent", "Present"))
+
+p5 <- pheatmap(
+  mat_unique_numericII,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = c("white", "blue2"),  # Use specified colors for heatmap
+  #annotation_row = annotation_df,  # Add pathway annotations
+  #annotation_legend = TRUE,  # Show annotation legend
+  #annotation_colors = list(Regulation = regulation_colors),  # Apply custom annotation colors
+  fontsize_row = 9,
+  fontsize_col = 13,
+  legend = FALSE,
+  #legend_breaks = c(0, 1),          
+  legend_labels = c("Absent", "Present"))
+
+ggsave("uniquePlotI.pdf", plot = p4, device = "pdf", width = 16, height = 10)
+ggsave("uniquePlotII.pdf", plot = p5, device = "pdf", width = 16, height = 10)
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+
+split_values <- unlist(strsplit(GO_df1$core_enrichment, "/"))
+
+# Count occurrences of each value
+value_counts <- table(split_values)
+value_counts <- sort(value_counts, decreasing = TRUE)
+value_counts_filtered <- value_counts[value_counts >= 15]
+
+
+pathway_matrix <- matrix(0, nrow = nrow(GO_df1), ncol = length(rownames(value_counts_filtered)))
+colnames(pathway_matrix) <- rownames(value_counts_filtered)
+
+# Loop through each row of GO_df1 to populate pathway_matrix
+for (i in 1:nrow(GO_df1)) {
+  genes <- unlist(strsplit(as.character(GO_df1$core_enrichment[i]), "/"))
+  # Find the intersection between genes in GO_df1 and genes in value_counts_filtered
+  common_genes <- intersect(genes, colnames(pathway_matrix))
+  # Set the corresponding pathways to 1 in pathway_matrix
+  pathway_matrix[i, match(common_genes, colnames(pathway_matrix))] <- 1
+}
+rownames(pathway_matrix) <- GO_df1$Description
+
+# Remove rows whose sum is 0
+pathway_matrix <- pathway_matrix[rowSums(pathway_matrix) != 0, ]
+
+# Generate annotations indicating up/down regulation based on enrichment scores
+pathway_names <- rownames(pathway_matrix)
+GO_df_subset <- GO_df1[GO_df1$Description %in% pathway_names, ]
+annotation <- ifelse(GO_df_subset$NES > 0, "Upregulated", "Downregulated")
+annotation_df <- data.frame(Pathway = GO_df_subset$Description, Regulation = annotation)
+annotation_df$Regulation <- as.factor(annotation_df$Regulation)
+
+regulation_colors <- c(Upregulated = "red", Downregulated = "blue")
+
+# Convert the pathway_matrix to a matrix with numerical values
+pathway_matrix_numeric <- pathway_matrix
+pathway_matrix_numeric[pathway_matrix_numeric == "Absent"] <- 0
+pathway_matrix_numeric[pathway_matrix_numeric == "Present"] <- 1
+pathway_matrix_numeric <- as.matrix(pathway_matrix_numeric)
+
+pathways <- annotation_df$Pathway
+annotation_df <- annotation_df[, -which(names(annotation_df) == "Pathway")]
+annotation_df <- as.data.frame(annotation_df)
+rownames(annotation_df) <- pathways
+
+
+p4 <- pheatmap(
+  pathway_matrix_numeric,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = c("white", "red"),  # Use specified colors for heatmap
+  annotation_row = annotation_df,  # Add pathway annotations
+  #annotation_legend = TRUE,  # Show annotation legend
+  annotation_colors = list(Regulation = regulation_colors),  # Apply custom annotation colors
+  fontsize_row = 6,  # Adjust row label font size
+  fontsize_col = 10,  # Adjust column label font size
+)
+
+
+```
